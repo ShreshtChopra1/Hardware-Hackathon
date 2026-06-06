@@ -40,4 +40,4 @@ class HCSR04:
 
     def distance_mm(self):
         """Distance in mm (int). Raises HCSR04Error if out of range."""
-        return round(self._pulse_us() / 5.8)
+        return round(self.distance_cm() * 10)
