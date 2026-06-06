@@ -3,6 +3,9 @@
 Programming the STM32G4 Nucleo-64 (NUCLEO-G474RE, MB1367) in Python by running
 MicroPython directly on the MCU.
 
+## Our Project
+We have developed a wearable device for 
+
 ## What's installed
 
 - `.venv/` — project Python virtual environment
