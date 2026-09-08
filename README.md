@@ -104,6 +104,10 @@ test-scripts/   standalone sensor bring-up scripts
 The board's own filesystem is deployment state, not version control. Edit in
 `src/`, then push with `mpremote cp`.
 
+## Further reading
+
+`DOCS.md` carries the full source map, board notes and complete pin map.
+
 ## Reference
 
 - [MicroPython STM32 quickref](https://docs.micropython.org/en/latest/stm32/quickref.html)
