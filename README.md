@@ -1,95 +1,115 @@
-# Hardware-Hackathon — NUCLEO-G474RE + MicroPython
+# stm32-micropython-drivers
 
-Programming the STM32G4 Nucleo-64 (NUCLEO-G474RE, MB1367) in Python by running
-MicroPython directly on the MCU.
+Hand-written MicroPython drivers for the **STM32G4 Nucleo-64 (NUCLEO-G474RE)**,
+plus a demo that wires them together into a sensor-reactive animated face on a
+128×128 grayscale OLED.
 
-## Our Project
-We have developed a wearable device for 
+Everything here runs *on the MCU* — MicroPython on bare STM32, no Arduino layer,
+no vendored libraries.
 
-## What's installed
+## Drivers
 
-- `.venv/` — project Python virtual environment
-- `firmware/NUCLEO_G474RE.hex` — MicroPython v1.28.0 firmware (Apr 2026)
-- `src/main.py` — example LED blink to copy onto the board
-- Tools in the venv: `mpremote` (REPL + file transfer), `pyserial`
+| Module | Device | Notes |
+|---|---|---|
+| `src/ssd1327.py` | Waveshare 1.5" 128×128 OLED | 4-bit grayscale over I²C. Uses `framebuf` in `GS4_HMSB` — high nibble is the left pixel — into an 8,192-byte buffer |
+| `src/hcsr04.py` | HC-SR04-R ultrasonic | `time_pulse_us` echo timing, 2–400 cm. Enforces 60 ms between readings so trigger/echo don't cross-talk |
+| `src/mpu6050.py` | InvenSense MPU-6050 | 6-axis IMU over I²C at 0x68, raw int16 with the LSB/g and LSB/dps scale factors documented |
+| `src/audio.py` | PWM tone generation | TIM3_CH1 square wave into a PAM8302 class-D amp. `Timer.freq()` retunes cleanly across the range despite TIM3 being 16-bit |
 
-## One-time: flash MicroPython onto the board
+The OLED and the IMU **share one I²C bus** (PB8/PB9), and the audio pin was
+chosen specifically to dodge PA5 (user LED), PB8/PB9 (that shared bus), PA2/PA3
+(the virtual COM port) and PA4 (reserved for a later DAC1 + DMA upgrade). Pin
+conflicts on a 64-pin part are the actual constraint; each driver documents its
+wiring at the top of the file.
 
-The on-board STLINK-V3E exposes the board as a USB mass-storage drive, so
-flashing is drag-and-drop — no extra tooling needed.
+## Demo — `src/oled_face.py`
 
-1. Plug the board into your Mac via USB Micro-B. A volume named
-   **`NOD_G474RE`** mounts on the desktop (also visible at `/Volumes/NOD_G474RE`).
-2. Copy the firmware onto it:
+An animated face whose expression is driven by live sensor data:
 
-   ```sh
-   cp firmware/NUCLEO_G474RE.hex /Volumes/NOD_G474RE/
-   ```
+| Ultrasonic distance | Expression |
+|---|---|
+| < 10 cm | Scared — wide eyes, open-O mouth, V brows |
+| 10–40 cm | Surprised — raised brows, oval mouth |
+| 40–90 cm | Happy — big smile, rosy cheeks |
+| > 90 cm | Sleepy — half-closed eyes, floating ZZZ |
 
-3. The STLINK programs the chip automatically. The LED next to the USB
-   connector flashes red/green during programming (~5 s). When it finishes,
-   the volume re-mounts. You now have MicroPython on the board.
-
-## Daily use: REPL + push code
-
-Activate the venv first:
+MPU-6050 tilt shifts the pupils in real time, eyes blink on a 2–4 s random
+interval, and boot plays an expanding-ring animation.
 
 ```sh
+mpremote connect /dev/cu.usbmodem11103 cp src/ssd1327.py :ssd1327.py
+mpremote connect /dev/cu.usbmodem11103 cp src/mpu6050.py :mpu6050.py
+mpremote connect /dev/cu.usbmodem11103 cp src/hcsr04.py  :hcsr04.py
+mpremote connect /dev/cu.usbmodem11103 run src/oled_face.py
+```
+
+`src/main.py` is the current boot script: PWM audio bring-up (A4, a C-major
+scale, a short melody) followed by an IMU stream and LED heartbeat.
+
+## Hardware
+
+- **MCU:** STM32G474RET6 — Cortex-M4 @ 170 MHz, 512 KB flash, 128 KB SRAM, LQFP64
+- **Debugger:** on-board STLINK-V3E, which exposes both a USB mass-storage volume
+  for drag-and-drop flashing *and* a USB CDC serial port for the REPL
+- **Firmware:** MicroPython v1.28.0 (`firmware/NUCLEO_G474RE.hex`)
+
+## Flashing MicroPython (one time)
+
+The STLINK-V3E mounts the board as a drive, so there's no toolchain to set up.
+
+1. Plug in over USB Micro-B. A volume named **`NOD_G474RE`** mounts.
+2. `cp firmware/NUCLEO_G474RE.hex /Volumes/NOD_G474RE/`
+3. The LED by the USB connector flashes red/green for ~5 s, then the volume
+   re-mounts. MicroPython is on the board.
+
+## Daily loop
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install mpremote pyserial
 source .venv/bin/activate
+
+mpremote connect /dev/cu.usbmodem11103 repl   # live REPL on the MCU, Ctrl-] to exit
+mpremote devs                                 # if the device path changed after a re-plug
 ```
 
-Open a live Python REPL on the board:
-
-```sh
-mpremote connect /dev/cu.usbmodem11103 repl
-```
-
-(Exit the REPL with `Ctrl-]`. If the device path changes after a re-plug,
-list candidates with `mpremote devs`.)
-
-At the `>>>` prompt you can type Python that runs on the MCU:
+At the `>>>` prompt you're running Python on the microcontroller:
 
 ```python
 >>> from machine import Pin
->>> led = Pin("A5", Pin.OUT)
+>>> led = Pin("A5", Pin.OUT)   # LD2, PA5 per UM2505 section 6.4
 >>> led.on()
->>> led.off()
 ```
 
-`A5` is LD2, the user LED on the Nucleo (PA5 per UM2505 §6.4).
-
-## Push a script to run on boot
-
-Copy `src/main.py` to the board's filesystem (it runs automatically after
-`boot.py` on power-up):
+Copy a script to run on every power-up, or run it once without persisting:
 
 ```sh
 mpremote connect /dev/cu.usbmodem11103 cp src/main.py :main.py
 mpremote connect /dev/cu.usbmodem11103 reset
+
+mpremote connect /dev/cu.usbmodem11103 run src/main.py   # one-shot, not saved
 ```
 
-The user LED should now blink at 1 Hz.
+Other useful commands: `mpremote ls` (files on the board), `mpremote rm :main.py`,
+`mpremote soft-reset` (restart MicroPython without dropping USB).
 
-To run a script once *without* persisting it:
+## Layout
 
-```sh
-mpremote connect /dev/cu.usbmodem11103 run src/main.py
+```
+src/            drivers + demos — the source of truth
+firmware/       MicroPython .hex for this board
+datasheets/     board manual (UM2505) and sensor datasheets
+test-scripts/   standalone sensor bring-up scripts
 ```
 
-## Useful mpremote commands
-
-```sh
-mpremote devs                            # list connected MicroPython boards
-mpremote ls                              # list files on the board
-mpremote cp src/foo.py :                 # copy file to board root
-mpremote cp :main.py main_backup.py      # copy file FROM board
-mpremote rm :main.py                     # delete file on board
-mpremote reset                           # soft-reset the board
-mpremote soft-reset                      # restart MicroPython without losing USB
-```
+The board's own filesystem is deployment state, not version control. Edit in
+`src/`, then push with `mpremote cp`.
 
 ## Reference
 
-- Board manual: `datasheets/um2505-stm32g4-nucleo64-boards-mb1367-stmicroelectronics (1).pdf`
-- MicroPython STM32 quickref: https://docs.micropython.org/en/latest/stm32/quickref.html
-- MicroPython `machine` API: https://docs.micropython.org/en/latest/library/machine.html
+- [MicroPython STM32 quickref](https://docs.micropython.org/en/latest/stm32/quickref.html)
+- [MicroPython `machine` API](https://docs.micropython.org/en/latest/library/machine.html)
+- Board manual: UM2505, in `datasheets/`
+
+## License
+
+MIT
